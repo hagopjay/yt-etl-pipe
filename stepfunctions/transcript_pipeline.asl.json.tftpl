@@ -1,0 +1,307 @@
+{
+  "Comment": "US Accidents Platform's sibling project's cousin: YouTube transcript acquisition pipeline. Caption-first, ASR-fallback, confidence-gated human review. Rendered from Terraform via templatefile() -- ${} placeholders are Terraform interpolations, not ASL intrinsics.",
+  "StartAt": "InjectConfig",
+  "States": {
+
+    "InjectConfig": {
+      "Type": "Pass",
+      "Comment": "Bakes deploy-time config (Terraform variables, not per-video data) into the execution input once, up front, instead of threading Lambda environment-variable lookups through every downstream Choice state.",
+      "Parameters": {
+        "video_id.$": "$.video_id",
+        "source_url.$": "$.source_url",
+        "respect_disabled": ${respect_creator_disabled_captions},
+        "asr_enabled": ${enable_asr_fallback}
+      },
+      "Next": "FetchCaptions"
+    },
+
+    "FetchCaptions": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${fetch_captions_arn}",
+        "Payload": {
+          "video_id.$": "$.video_id",
+          "source_url.$": "$.source_url"
+        }
+      },
+      "ResultSelector": { "payload.$": "$.Payload" },
+      "ResultPath": "$.fetch_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["BlockedRetryable"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": ${max_fetch_retry_attempts},
+          "BackoffRate": 2.0,
+          "Comment": "IP-block / rate-limit class errors only -- see fetch_captions.py docstring point 3 for why this is scoped to one exception type instead of States.ALL."
+        },
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0,
+          "Comment": "Lambda service-level transient failures, unrelated to YouTube -- a much shorter retry budget since these are rare infra blips, not the expected-and-common proxy-block case above."
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkBlockedPermanently"
+        }
+      ],
+      "Next": "MergeFetchResult"
+    },
+
+    "MergeFetchResult": {
+      "Type": "Pass",
+      "Comment": "Reshape step: flattens fetch_result.payload back to top level while preserving the InjectConfig flags, which a naive OutputPath collapse on FetchCaptions would have silently dropped. fetch_captions.py guarantees every one of these keys is present in every branch (see its docstring) specifically so these references never hit a missing-path runtime error.",
+      "Parameters": {
+        "video_id.$": "$.video_id",
+        "source_url.$": "$.source_url",
+        "respect_disabled.$": "$.respect_disabled",
+        "asr_enabled.$": "$.asr_enabled",
+        "status.$": "$.fetch_result.payload.status",
+        "language.$": "$.fetch_result.payload.language",
+        "segments.$": "$.fetch_result.payload.segments",
+        "is_generated.$": "$.fetch_result.payload.is_generated",
+        "transcript_source.$": "$.fetch_result.payload.transcript_source"
+      },
+      "Next": "ClassifyFetchResult"
+    },
+
+    "ClassifyFetchResult": {
+      "Type": "Choice",
+      "Choices": [
+        { "Variable": "$.status", "StringEquals": "SUCCESS", "Next": "PersistTranscript" },
+        { "Variable": "$.status", "StringEquals": "UNAVAILABLE", "Next": "MarkUnavailable" },
+        { "Variable": "$.status", "StringEquals": "DISABLED", "Next": "HandleDisabledCaptions" },
+        { "Variable": "$.status", "StringEquals": "NO_CAPTIONS", "Next": "HandleNoCaptions" }
+      ],
+      "Default": "MarkBlockedPermanently"
+    },
+
+    "HandleDisabledCaptions": {
+      "Type": "Choice",
+      "Comment": "See terraform var respect_creator_disabled_captions -- a product/ethics decision, not just a technical one (docs/ARCHITECTURE_INSIGHTS.md).",
+      "Choices": [
+        { "Variable": "$.respect_disabled", "BooleanEquals": true, "Next": "MarkDisabledByCreator" }
+      ],
+      "Default": "RouteToAsrOrTerminal"
+    },
+
+    "HandleNoCaptions": {
+      "Type": "Pass",
+      "Next": "RouteToAsrOrTerminal"
+    },
+
+    "RouteToAsrOrTerminal": {
+      "Type": "Choice",
+      "Choices": [
+        { "Variable": "$.asr_enabled", "BooleanEquals": true, "Next": "StartTranscribeJob" }
+      ],
+      "Default": "MarkNoCaptionsAvailable"
+    },
+
+    "StartTranscribeJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Comment": "waitForTaskToken -- see start_transcribe_job.py docstring. Resumed by transcribe_callback.py via an EventBridge rule on the Transcribe job's own COMPLETED/FAILED event, not by polling.",
+      "Parameters": {
+        "FunctionName": "${start_transcribe_job_arn}",
+        "Payload": {
+          "taskToken.$": "$$.Task.Token",
+          "video_id.$": "$.video_id"
+        }
+      },
+      "TimeoutSeconds": 1800,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkTranscribeFailed"
+        }
+      ],
+      "Next": "EvaluateConfidence"
+    },
+
+    "EvaluateConfidence": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${evaluate_confidence_arn}",
+        "Payload.$": "$"
+      },
+      "ResultSelector": { "payload.$": "$.Payload" },
+      "ResultPath": "$.result",
+      "OutputPath": "$.result.payload",
+      "Next": "NeedsHumanReview"
+    },
+
+    "NeedsHumanReview": {
+      "Type": "Choice",
+      "Choices": [
+        { "Variable": "$.needs_review", "BooleanEquals": true, "Next": "RequestHumanReview" }
+      ],
+      "Default": "PersistTranscript"
+    },
+
+    "RequestHumanReview": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Comment": "waitForTaskToken -- resumed by review_callback.py when a human clicks approve/reject. See request_human_review.py for the full security model on the emailed links.",
+      "Parameters": {
+        "FunctionName": "${request_human_review_arn}",
+        "Payload": {
+          "taskToken.$": "$$.Task.Token",
+          "video_id.$": "$.video_id",
+          "language.$": "$.language",
+          "segments.$": "$.segments",
+          "transcript_source.$": "$.transcript_source",
+          "is_generated.$": "$.is_generated",
+          "asr_avg_confidence.$": "$.asr_avg_confidence"
+        }
+      },
+      "TimeoutSeconds": ${review_timeout_seconds},
+      "Catch": [
+        {
+          "ErrorEquals": ["ReviewRejected"],
+          "ResultPath": "$.error",
+          "Next": "MarkRejected"
+        },
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "ResultPath": "$.error",
+          "Next": "MarkReviewExpired"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkReviewExpired"
+        }
+      ],
+      "Next": "PersistTranscript"
+    },
+
+    "PersistTranscript": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${persist_transcript_arn}",
+        "Payload.$": "$"
+      },
+      "ResultSelector": { "payload.$": "$.Payload" },
+      "ResultPath": "$.result",
+      "OutputPath": "$.result.payload",
+      "End": true
+    },
+
+    "MarkUnavailable": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:updateItem",
+      "Comment": "Direct DynamoDB SDK integration -- no Lambda needed for a single, simple state-transition write. Cuts an invocation (cost + cold-start + one more thing that can fail) for every terminal state below.",
+      "Parameters": {
+        "TableName": "${jobs_table_name}",
+        "Key": { "video_id": { "S.$": "$.video_id" } },
+        "UpdateExpression": "SET #s = :status, updated_at = :now",
+        "ExpressionAttributeNames": { "#s": "status" },
+        "ExpressionAttributeValues": {
+          ":status": { "S": "UNAVAILABLE" },
+          ":now": { "S.$": "$$.State.EnteredTime" }
+        }
+      },
+      "End": true
+    },
+
+    "MarkDisabledByCreator": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${jobs_table_name}",
+        "Key": { "video_id": { "S.$": "$.video_id" } },
+        "UpdateExpression": "SET #s = :status",
+        "ExpressionAttributeNames": { "#s": "status" },
+        "ExpressionAttributeValues": { ":status": { "S": "NO_CAPTIONS" } }
+      },
+      "End": true
+    },
+
+    "MarkNoCaptionsAvailable": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${jobs_table_name}",
+        "Key": { "video_id": { "S.$": "$.video_id" } },
+        "UpdateExpression": "SET #s = :status",
+        "ExpressionAttributeNames": { "#s": "status" },
+        "ExpressionAttributeValues": { ":status": { "S": "NO_CAPTIONS" } }
+      },
+      "End": true
+    },
+
+    "MarkTranscribeFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${jobs_table_name}",
+        "Key": { "video_id": { "S.$": "$.video_id" } },
+        "UpdateExpression": "SET #s = :status",
+        "ExpressionAttributeNames": { "#s": "status" },
+        "ExpressionAttributeValues": { ":status": { "S": "TRANSCRIBE_FAILED" } }
+      },
+      "Next": "NotifyOps"
+    },
+
+    "MarkRejected": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${jobs_table_name}",
+        "Key": { "video_id": { "S.$": "$.video_id" } },
+        "UpdateExpression": "SET #s = :status",
+        "ExpressionAttributeNames": { "#s": "status" },
+        "ExpressionAttributeValues": { ":status": { "S": "REJECTED" } }
+      },
+      "End": true
+    },
+
+    "MarkReviewExpired": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:updateItem",
+      "Comment": "Reached if a reviewer never clicks either link within review_token_ttl_hours -- fails safe to a non-published state rather than hanging the execution forever.",
+      "Parameters": {
+        "TableName": "${jobs_table_name}",
+        "Key": { "video_id": { "S.$": "$.video_id" } },
+        "UpdateExpression": "SET #s = :status",
+        "ExpressionAttributeNames": { "#s": "status" },
+        "ExpressionAttributeValues": { ":status": { "S": "REVIEW_EXPIRED" } }
+      },
+      "Next": "NotifyOps"
+    },
+
+    "MarkBlockedPermanently": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:updateItem",
+      "Comment": "Reached after exhausting FetchCaptions' retry budget -- the proxy pool itself may be exhausted/blocked, which is an operational issue worth a human noticing, not silently swallowing.",
+      "Parameters": {
+        "TableName": "${jobs_table_name}",
+        "Key": { "video_id": { "S.$": "$.video_id" } },
+        "UpdateExpression": "SET #s = :status",
+        "ExpressionAttributeNames": { "#s": "status" },
+        "ExpressionAttributeValues": { ":status": { "S": "BLOCKED_PERMANENTLY" } }
+      },
+      "Next": "NotifyOps"
+    },
+
+    "NotifyOps": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${ops_alarms_topic_arn}",
+        "Subject": "YouTube transcript pipeline: execution needs attention",
+        "Message.$": "States.Format('video_id={} reached a terminal failure state. Check the jobs table for details.', $.video_id)"
+      },
+      "End": true
+    }
+  }
+}

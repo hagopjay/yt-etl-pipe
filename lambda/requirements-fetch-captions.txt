@@ -1,0 +1,4 @@
+youtube-transcript-api>=1.0,<2.0
+# boto3/botocore are provided by the Lambda Python runtime already --
+# NOT pinned here to avoid shipping a stale copy that shadows the
+# runtime's (typically more current, security-patched) version.

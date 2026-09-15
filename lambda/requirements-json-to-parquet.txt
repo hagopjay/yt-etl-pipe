@@ -1,0 +1,5 @@
+# pandas ships as part of the published AWSSDKPandas Lambda layer
+# (see terraform/05_lambda_core.tf's awswrangler_layer_arn) -- nothing
+# to install into the function's own zip for this one. File kept as an
+# explicit marker so it's obvious this omission is deliberate, not an
+# oversight.

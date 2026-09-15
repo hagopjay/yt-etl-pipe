@@ -1,0 +1,30 @@
+# Container-image Lambda for start_transcribe_job.py -- see that file's
+# docstring for why this ONE function is a container image while every
+# other function in this project is a plain zip. Build & push with:
+#
+#   docker build -f Dockerfile.start_transcribe_job -t youtube-etl-start-transcribe .
+#   aws ecr get-login-password | docker login --username AWS --password-stdin <account>.dkr.ecr.<region>.amazonaws.com
+#   docker tag youtube-etl-start-transcribe:latest <account>.dkr.ecr.<region>.amazonaws.com/youtube-etl-start-transcribe:latest
+#   docker push <account>.dkr.ecr.<region>.amazonaws.com/youtube-etl-start-transcribe:latest
+#
+# Then point terraform/09_lambda_transcript.tf's start_transcribe_job
+# function at that image URI instead of a zip (package_type = "Image").
+
+FROM public.ecr.aws/lambda/python:3.12
+
+# A static ffmpeg build avoids pulling in a full system package manager
+# dependency tree -- keeps the image smaller and the build reproducible
+# across architectures.
+RUN dnf install -y tar xz && \
+    curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o /tmp/ffmpeg.tar.xz && \
+    tar -xf /tmp/ffmpeg.tar.xz -C /tmp && \
+    cp /tmp/ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ffmpeg && \
+    cp /tmp/ffmpeg-*-amd64-static/ffprobe /usr/local/bin/ffprobe && \
+    rm -rf /tmp/ffmpeg* && \
+    dnf remove -y tar xz && dnf clean all
+
+RUN pip install --no-cache-dir yt-dlp boto3
+
+COPY start_transcribe_job.py ${LAMBDA_TASK_ROOT}/
+
+CMD ["start_transcribe_job.handler"]
