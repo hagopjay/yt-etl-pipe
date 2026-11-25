@@ -148,12 +148,30 @@ class Meta:
         log.warning("Data API quota exhausted (%s); using yt-dlp for 6 h", e)
         self._api_off_until = time.time() + 6 * 3600
 
+    _FATAL = {"API_KEY_INVALID", "keyInvalid", "SERVICE_DISABLED", "accessNotConfigured",
+              "API_KEY_HTTP_REFERRER_BLOCKED", "ipRefererBlocked", "API_KEY_IP_ADDRESS_BLOCKED",
+              "API_KEY_SERVICE_BLOCKED"}
+
+    def _fatal(self, e: ApiError) -> bool:
+        """A broken key fails every call the same way; say so once, loudly,
+        and stop using it for this process instead of failing job by job."""
+        if not self._FATAL & set(e.reasons):
+            return False
+        from kb.yt_api import diagnose
+        what, fix = diagnose(e)
+        log.error("YT_API_KEY unusable: %s -> %s. Using yt-dlp; run `python -m kb check` after fixing.", what, fix)
+        self._api_off_until = float("inf")
+        return True
+
     def videos(self, ids: list[str]) -> list[dict]:
         if self._api_ok():
             try:
                 return self.api.videos(ids)
             except QuotaExceeded as e:
                 self._quota(e)
+            except ApiError as e:
+                if not self._fatal(e):
+                    raise
         out = []
         for vid in ids:
             v = self.ytdlp.video(vid)
@@ -171,7 +189,8 @@ class Meta:
             except QuotaExceeded as e:
                 self._quota(e)
             except ApiError as e:
-                log.warning("API could not resolve %s (%s); trying yt-dlp", ref, e)
+                if not self._fatal(e):
+                    log.warning("API could not resolve %s (%s); trying yt-dlp", ref, e)
         return self.ytdlp.channel_catalogue(ref, tabs=tabs, limit=limit)
 
 

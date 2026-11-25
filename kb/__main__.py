@@ -10,6 +10,7 @@
   import-queue   ingest/ queue.jsonl -> board
   export         markdown / jsonl / parquet
   status         counts, queue, pause state
+  check          verify YT_API_KEY (1 quota unit) + caption endpoint access
 """
 
 from __future__ import annotations
@@ -140,6 +141,56 @@ def cmd_status(s, a):
     print(json.dumps({"home": str(s.home), **store.stats(c), "jobs": jobs.summary(c)}, indent=2, default=str))
 
 
+def cmd_check(s, a):
+    """Verify the API key (1 quota unit), show pause state, and optionally
+    probe the caption endpoint -- the two things that rate-limit you are
+    different systems, and this tells you which one is the problem."""
+    import urllib.error
+    from kb import transcripts as T, yt_api
+    ok = True
+    src = config.SOURCES.get("YT_API_KEY")
+    print(f"YT_API_KEY       {yt_api.mask(s.api_key)}" + (f"   from {src}" if src else ""))
+    if not s.api_key:
+        ok = False
+        print(f"  ✗ not set. Put  YT_API_KEY=...  in {Path.cwd() / '.env'}  or  {s.home / '.env'},"
+              "\n    or export it in your shell, then run this again.")
+    else:
+        api = yt_api.DataApi(s.api_key)
+        try:
+            ch = api.probe(a.channel)
+            subs = f"{ch['subscriber_count']:,}" if ch.get("subscriber_count") is not None else "hidden"
+            print(f"Data API         ✓ works   channels.list {a.channel} -> {ch['title']} ({ch['channel_id']}), "
+                  f"{subs} subscribers, {ch.get('video_count') or '?'} videos   [cost: {api.units} unit]")
+        except yt_api.ApiError as e:
+            ok = False
+            what, fix = yt_api.diagnose(e)
+            print(f"Data API         ✗ {what}\n  fix: {fix}\n  raw: {e}")
+        except urllib.error.URLError as e:
+            ok = False
+            print(f"Data API         ✗ could not reach googleapis.com: {e.reason}")
+
+    c = _conn(s)
+    paused = jobs.paused_until(c)
+    blocks = jobs.get_meta(c, "consecutive_blocks", 0)
+    print(f"metadata via     {'Data API' if ok and s.api_key else 'yt-dlp'}   (catalogues, titles, durations, views)")
+    print(f"transcripts via  YouTube caption endpoint (an API key cannot fetch other people's captions)")
+    if paused:
+        print(f"caption pause    ⏸ until {paused} after {blocks} consecutive block(s); "
+              "`python -m kb retry --unpause` to resume early")
+    if not a.no_transcript:
+        try:
+            r = T.fetch(a.video, T.make_client(s), s.langs)
+            print(f"caption endpoint ✓ reachable   {a.video} -> {r.status}"
+                  + (f", {len(r.segments)} segments ({r.language})" if r.status == "ok" else ""))
+        except T.Blocked as e:
+            print(f"caption endpoint ✗ BLOCKED for this IP ({e}).\n"
+                  "  The API key does not help here. Options: wait it out (kb pauses itself),\n"
+                  "  slow down with YTKB_DELAY=6 or more, or route captions through YTKB_PROXY_USER/PASS (Webshare).")
+        except Exception as e:  # noqa: BLE001
+            print(f"caption endpoint ? {type(e).__name__}: {str(e)[:200]}")
+    sys.exit(0 if ok else 1)
+
+
 def cmd_retry(s, a):
     c = _conn(s)
     print(f"requeued {jobs.retry_failed(c)} failed jobs")
@@ -229,6 +280,12 @@ def main(argv=None):
 
     x = sub.add_parser("status")
     x.set_defaults(fn=cmd_status)
+
+    x = sub.add_parser("check", help="verify YT_API_KEY and caption-endpoint access")
+    x.add_argument("--channel", default="@YouTube", help="channel to look up with the key (1 quota unit)")
+    x.add_argument("--video", default="dQw4w9WgXcQ", help="video used to probe the caption endpoint")
+    x.add_argument("--no-transcript", action="store_true", help="skip the caption-endpoint probe")
+    x.set_defaults(fn=cmd_check)
 
     x = sub.add_parser("retry", help="requeue failed jobs")
     x.add_argument("--unpause", action="store_true")

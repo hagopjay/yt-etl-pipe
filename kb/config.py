@@ -14,6 +14,11 @@ server and the worker agree without a config file.
   YTKB_PROXY_USER /  optional Webshare rotating-residential credentials.
   YTKB_PROXY_PASS    Not needed from a home IP; needed from any cloud IP.
   YTKB_PROXY_URL     optional generic http(s) proxy instead of Webshare.
+
+Any of these can also live in a `.env` file (KEY=value per line) in the
+current directory or in YTKB_HOME. Real environment variables win over
+.env; .env in the cwd wins over .env in YTKB_HOME. Both locations are
+git-ignored -- never commit the key.
 """
 
 from __future__ import annotations
@@ -21,6 +26,41 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+
+def read_dotenv(path: Path) -> dict[str, str]:
+    """Minimal .env parser: KEY=value, optional `export `, optional quotes,
+    `#` comments. No interpolation -- an API key needs none."""
+    out: dict[str, str] = {}
+    try:
+        lines = Path(path).read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.removeprefix("export ").split("=", 1)
+        k, v = k.strip(), v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+            v = v[1:-1]
+        elif " #" in v:
+            v = v.split(" #", 1)[0].rstrip()
+        if k:
+            out[k] = v
+    return out
+
+
+def _apply_dotenv(path: Path, sources: dict[str, str]) -> None:
+    for k, v in read_dotenv(path).items():
+        if k not in os.environ:
+            os.environ[k] = v
+            sources[k] = str(path)
+
+
+# Where each setting came from (env var name -> .env path); "environment" if
+# it was already set. Lets `kb check` say exactly which key is in use.
+SOURCES: dict[str, str] = {}
 
 
 @dataclass(frozen=True)
@@ -47,7 +87,11 @@ class Settings:
 
 
 def load(home: str | os.PathLike | None = None) -> Settings:
+    if "YT_API_KEY" in os.environ and "YT_API_KEY" not in SOURCES:
+        SOURCES["YT_API_KEY"] = "environment"
+    _apply_dotenv(Path.cwd() / ".env", SOURCES)
     h = Path(home or os.environ.get("YTKB_HOME") or "ytkb-data").expanduser().resolve()
+    _apply_dotenv(h / ".env", SOURCES)
     langs = tuple(x.strip() for x in os.environ.get("YTKB_LANGS", "en,en-US,en-GB").split(",") if x.strip())
     return Settings(
         home=h,
