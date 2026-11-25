@@ -440,3 +440,84 @@ def test_server_ui_api_and_csrf_guard(server):
     assert _req(server + "/api/video/ZZZZZZZZZZZ")[0] == 404
     code, body = _req(server + "/api/search?q=anything")
     assert code == 200 and json.loads(body)["videos"] == []
+
+
+# ------------------------------------------------------ API key handling
+def test_dotenv_is_loaded_without_overriding_real_env(tmp_path, monkeypatch):
+    import os
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("YTKB_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("YTKB_DELAY", "9")                      # real env wins
+    for k in ("YT_API_KEY", "YTKB_LANGS"):
+        monkeypatch.setenv(k, "x")
+        monkeypatch.delenv(k)                                  # recorded -> restored on teardown
+    (tmp_path / ".env").write_text('# my key\nexport YT_API_KEY="AIzaSyTESTKEY1234567890"  \nYTKB_DELAY=1\n')
+    (tmp_path / "home").mkdir()
+    (tmp_path / "home" / ".env").write_text("YT_API_KEY=ignored\nYTKB_LANGS=de,en # german first\n")
+    monkeypatch.setattr(config, "SOURCES", {})
+    s = config.load()
+    assert s.api_key == "AIzaSyTESTKEY1234567890" and s.delay == 9.0 and s.langs == ("de", "en")
+    assert config.SOURCES["YT_API_KEY"] == str(tmp_path / ".env")
+    from kb.yt_api import mask
+    assert mask(s.api_key) == "AIza…7890 (23 chars)"
+
+
+def _google_error_opener(code, reason, detail):
+    body = json.dumps({"error": {"code": code, "message": f"msg {reason}", "errors": [{"reason": reason}],
+                                 "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": detail}]}})
+
+    def opener(url, timeout=30):
+        raise urllib.error.HTTPError(url, code, "err", {}, io.BytesIO(body.encode()))
+    return opener
+
+
+@pytest.mark.parametrize("code,reason,detail,expect", [
+    (400, "badRequest", "API_KEY_INVALID", "not valid"),
+    (403, "accessNotConfigured", "SERVICE_DISABLED", "not enabled"),
+    (403, "forbidden", "API_KEY_HTTP_REFERRER_BLOCKED", "referrer"),
+    (403, "quotaExceeded", "", "quota"),
+])
+def test_api_errors_are_diagnosed(code, reason, detail, expect):
+    from kb import yt_api
+    api = DataApi("k", opener=_google_error_opener(code, reason, detail))
+    with pytest.raises(yt_api.ApiError) as ei:
+        api.probe()
+    assert (reason == "quotaExceeded") == isinstance(ei.value, yt_api.QuotaExceeded)
+    what, fix = yt_api.diagnose(ei.value)
+    assert expect in what and fix
+
+
+def test_broken_key_falls_back_to_ytdlp_once(env, caplog):
+    s, _ = env
+    calls = []
+
+    class FakeYtdlp:
+        @staticmethod
+        def channel_catalogue(ref, tabs=(), limit=None):
+            calls.append(ref)
+            return {"channel_id": UC}, []
+
+        @staticmethod
+        def video(vid):
+            return {"video_id": vid}
+
+    m = jobs.Meta(s, api=DataApi("bad", opener=_google_error_opener(400, "badRequest", "API_KEY_INVALID")), ytdlp=FakeYtdlp)
+    assert m.backend == "api"
+    assert m.channel("@x")[0]["channel_id"] == UC and m.backend == "yt-dlp"
+    assert m.videos([VID]) == [{"video_id": VID}]          # no further API calls, no job failures
+    assert "YT_API_KEY unusable" in caplog.text
+
+
+def test_check_command_reports_working_key(env, monkeypatch, capsys):
+    from kb import __main__ as cli, yt_api
+    monkeypatch.setenv("YT_API_KEY", "AIzaSyTESTKEY1234567890")
+    monkeypatch.setattr(yt_api.DataApi, "probe", lambda self, ref: {
+        "title": "YouTube", "channel_id": "UCBR8-60-B28hp2BmDPdntcQ", "subscriber_count": 1000, "video_count": 5})
+    with pytest.raises(SystemExit) as ei:
+        cli.main(["check", "--no-transcript"])
+    out = capsys.readouterr().out
+    assert ei.value.code == 0 and "✓ works" in out and "AIza…7890" in out and "metadata via     Data API" in out
+    monkeypatch.delenv("YT_API_KEY")
+    with pytest.raises(SystemExit) as ei:
+        cli.main(["check", "--no-transcript"])
+    assert ei.value.code == 1 and "not set" in capsys.readouterr().out

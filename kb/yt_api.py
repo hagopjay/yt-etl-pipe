@@ -27,11 +27,54 @@ _DUR = re.compile(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?
 
 
 class ApiError(Exception):
-    pass
+    def __init__(self, msg: str, status: int | None = None, reasons: tuple[str, ...] = (), message: str = ""):
+        super().__init__(msg)
+        self.status, self.reasons, self.message = status, reasons, message
 
 
 class QuotaExceeded(ApiError):
     pass
+
+
+def _google_error(body: str) -> tuple[tuple[str, ...], str]:
+    """Google errors carry machine reasons in two places: the legacy
+    error.errors[].reason (keyInvalid, quotaExceeded, accessNotConfigured)
+    and google.rpc.ErrorInfo details[].reason (API_KEY_INVALID,
+    SERVICE_DISABLED, API_KEY_HTTP_REFERRER_BLOCKED, ...). Collect both."""
+    try:
+        err = json.loads(body).get("error", {})
+    except (json.JSONDecodeError, AttributeError):
+        return (), body[:200]
+    reasons = [e.get("reason") for e in err.get("errors", [])] + [d.get("reason") for d in err.get("details", [])]
+    return tuple(r for r in reasons if r), err.get("message", "")
+
+
+# reason -> (what it means, what to do). Ordered: first match wins.
+DIAGNOSES = [
+    ({"API_KEY_INVALID", "keyInvalid"},
+     "the key is not valid", "copy it again from Google Cloud Console > APIs & Services > Credentials "
+     "(no quotes or spaces), or create a new one"),
+    ({"SERVICE_DISABLED", "accessNotConfigured"},
+     "YouTube Data API v3 is not enabled for this key's project",
+     "Console > APIs & Services > Library > 'YouTube Data API v3' > Enable (takes a minute to propagate)"),
+    ({"API_KEY_HTTP_REFERRER_BLOCKED", "ipRefererBlocked"},
+     "the key has a website (HTTP referrer) restriction", "a script sends no referrer: set Application "
+     "restrictions to None (or IP addresses) on the key"),
+    ({"API_KEY_IP_ADDRESS_BLOCKED"},
+     "the key is restricted to other IP addresses", "add your current public IP to the key's restrictions, or remove them"),
+    ({"API_KEY_SERVICE_BLOCKED", "API_KEY_ANDROID_APP_BLOCKED", "API_KEY_IOS_APP_BLOCKED"},
+     "the key's API restrictions don't include YouTube Data API v3",
+     "edit the key > API restrictions > add 'YouTube Data API v3'"),
+    ({"quotaExceeded", "dailyLimitExceeded", "RATE_LIMIT_EXCEEDED", "rateLimitExceeded"},
+     "the daily quota (10,000 units) is used up", "it resets at midnight Pacific time; kb falls back to yt-dlp until then"),
+]
+
+
+def diagnose(e: ApiError) -> tuple[str, str]:
+    for keys, what, fix in DIAGNOSES:
+        if keys & set(e.reasons):
+            return what, fix
+    return f"HTTP {e.status}: {e.message or e}", "see the message above"
 
 
 def parse_duration(iso: str | None) -> int | None:
@@ -87,9 +130,10 @@ class DataApi:
                 return json.loads(r.read())
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", "replace")
-            if e.code == 403 and ("quotaExceeded" in body or "dailyLimitExceeded" in body):
-                raise QuotaExceeded(body[:300]) from e
-            raise ApiError(f"{endpoint} HTTP {e.code}: {body[:300]}") from e
+            reasons, message = _google_error(body)
+            cls = QuotaExceeded if {"quotaExceeded", "dailyLimitExceeded"} & set(reasons) else ApiError
+            raise cls(f"{endpoint} HTTP {e.code} {','.join(reasons)}: {message or body[:300]}",
+                      status=e.code, reasons=reasons, message=message) from e
 
     # ------------------------------------------------------------ channels
     def resolve_channel(self, ref: str) -> dict | None:
@@ -182,6 +226,21 @@ class DataApi:
             raise ApiError(f"channel not found: {ref}")
         ids = list(self.iter_upload_ids(ch["uploads_playlist_id"], limit=limit)) if ch["uploads_playlist_id"] else []
         return ch, self.videos(ids)
+
+
+    def probe(self, ref: str = "@YouTube") -> dict:
+        """One channels.list call (1 quota unit) that proves the key, the
+        enabled API and the key restrictions all work end to end."""
+        ch = self.resolve_channel(ref)
+        if not ch:
+            raise ApiError(f"key works, but channel {ref} was not found", status=200)
+        return ch
+
+
+def mask(key: str | None) -> str:
+    if not key:
+        return "(not set)"
+    return f"{key[:4]}…{key[-4:]} ({len(key)} chars)" if len(key) > 10 else "(too short to be a key)"
 
 
 def now_iso() -> str:

@@ -238,7 +238,10 @@ def serve(settings, host="127.0.0.1", port=8765, worker=True, open_browser=False
         t = threading.Thread(target=run_worker, name="kb-worker", daemon=True)
         t.start()
     url = f"http://{host}:{httpd.server_address[1]}/"
+    from kb.yt_api import mask
+    meta = f"Data API, key {mask(settings.api_key)}" if settings.api_key else "yt-dlp (no YT_API_KEY)"
     print(f"ytkb UI  ->  {url}   (data: {settings.home})   Ctrl-C to stop")
+    print(f"metadata ->  {meta}.  Verify with: python -m kb check")
     if open_browser:
         import webbrowser
         webbrowser.open(url)

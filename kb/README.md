@@ -10,9 +10,23 @@ pip install -r requirements-kb.txt
 python -m kb serve --open                 # http://127.0.0.1:8765
 ```
 
-Optional: `export YT_API_KEY=...` (YouTube Data API v3) for exact dates,
-likes and captions flags, and quota-cheap catalogue scrapes. Without a key
-everything still works through yt-dlp.
+Optional: a YouTube Data API v3 key for exact dates, likes, captions flags
+and quota-cheap catalogue scrapes. Without one, everything still works through
+yt-dlp. Put it in a `.env` file in the folder you run from (git-ignored):
+
+```
+YT_API_KEY=AIza...
+```
+
+then `python -m kb check` (1 quota unit). It prints `✓ works` with a channel
+looked up through your key, or names the exact problem: invalid key, API not
+enabled, wrong key restrictions, or quota used up. Restart `serve` after adding
+the key; the startup banner shows which backend is active.
+
+**The key does not fetch transcripts.** The Data API only downloads captions
+for videos you own (OAuth), so transcripts always come from YouTube's caption
+endpoint, rate-limited per IP. The key moves catalogue and metadata traffic off
+that IP, and that work keeps running while transcripts are paused.
 
 ## The loop
 
@@ -46,6 +60,7 @@ python -m kb import-takeout ~/Downloads/Takeout --since 2026-01-01   # via inges
 python -m kb import-queue queue.jsonl                    # output of ingest/seed_queue.py build
 python -m kb work                                        # drain the queue without the UI
 python -m kb export                                      # -> ytkb-data/exports/
+python -m kb check                                       # verify YT_API_KEY + caption endpoint
 python -m kb status | retry --unpause | rechunk --target 45
 ```
 
@@ -89,10 +104,12 @@ legal posture in `lambda/fetch_captions.py` applies here too.
 
 ## Environment
 
+Set these in the shell or in a `.env` file (cwd first, then `$YTKB_HOME/.env`). Real environment variables win.
+
 | var | default | |
 |---|---|---|
 | `YTKB_HOME` | `./ytkb-data` | data folder |
-| `YT_API_KEY` | — | Data API v3; falls back to yt-dlp on quota exhaustion for 6 h |
+| `YT_API_KEY` | — | Data API v3. Falls back to yt-dlp for 6 h when quota runs out, and for the whole run if the key is broken (logged loudly) |
 | `YTKB_LANGS` | `en,en-US,en-GB` | preferred caption languages; otherwise human-made in any language, then auto |
 | `YTKB_DELAY` | `2.5` | seconds between transcript fetches |
 | `YTKB_PROXY_USER` / `YTKB_PROXY_PASS` | — | Webshare rotating residential; only needed from cloud IPs |
