@@ -1,0 +1,4 @@
+# Local knowledge store (python -m kb). Python 3.10+, SQLite with FTS5 (bundled with CPython).
+youtube-transcript-api>=1.2,<2.0
+yt-dlp>=2025.1.1          # channel catalogues / metadata without an API key; upgrade often: pip install -U yt-dlp
+# pyarrow                 # optional: Parquet exports for DuckDB / Athena

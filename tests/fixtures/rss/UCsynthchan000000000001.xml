@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
+ <title>Data Talks</title>
+ <entry>
+  <id>yt:video:SynthVid012</id>
+  <yt:videoId>SynthVid012</yt:videoId>
+  <yt:channelId>UCsynthchan000000000001</yt:channelId>
+  <title>Embeddings in Production</title>
+  <published>2026-11-23T15:00:00+00:00</published>
+ </entry>
+ <entry>
+  <id>yt:video:SynthVid001</id>
+  <yt:videoId>SynthVid001</yt:videoId>
+  <yt:channelId>UCsynthchan000000000001</yt:channelId>
+  <title>Intro to Vector Databases</title>
+  <published>2026-10-10T15:00:00+00:00</published>
+ </entry>
+</feed>
