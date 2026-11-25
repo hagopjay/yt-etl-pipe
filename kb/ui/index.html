@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ytkb — YouTube knowledge board</title>
+<link rel="icon" href="data:,">
+<style>
+:root{
+  --bg:#0f1012; --panel:#16181b; --panel2:#1c1f23; --line:#2a2e34; --line2:#363b42;
+  --ink:#e8e6e1; --ink2:#a9a8a3; --ink3:#73726e;
+  --amber:#f2b134; --amber-d:#3a2c0c; --teal:#4fc1a6; --teal-d:#0f2e27;
+  --red:#ef6f5e; --red-d:#371613; --blue:#7aa7ff; --blue-d:#16213a; --violet:#b99cff;
+  --r:8px; --mono:ui-monospace,"JetBrains Mono","SF Mono",Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+@media (prefers-color-scheme: light){:root{
+  --bg:#f5f3ee; --panel:#fffdf8; --panel2:#f0ede6; --line:#e1ddd3; --line2:#d2cdc1;
+  --ink:#1d1c1a; --ink2:#55534e; --ink3:#8a877f;
+  --amber:#b77905; --amber-d:#fbefd2; --teal:#14806a; --teal-d:#dcf2ec;
+  --red:#c2412e; --red-d:#fbe3df; --blue:#2f5fd0; --blue-d:#e2eafb; --violet:#6c4bd6;
+}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:14px/1.45 var(--sans)}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:var(--blue);text-decoration:none} a:hover{text-decoration:underline}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:12.5px}
+.muted{color:var(--ink2)} .faint{color:var(--ink3)}
+
+/* ---------- top bar */
+header{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.bar{display:flex;align-items:center;gap:14px;padding:10px 18px}
+.brand{font:700 15px var(--mono);letter-spacing:-.02em;display:flex;align-items:center;gap:8px}
+.brand i{width:10px;height:10px;border-radius:2px;background:var(--amber);display:inline-block;box-shadow:0 0 0 3px var(--amber-d)}
+nav{display:flex;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:2px}
+nav button{border:0;background:none;padding:5px 12px;border-radius:6px;cursor:pointer;color:var(--ink2)}
+nav button.on{background:var(--panel2);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line2)}
+nav kbd{font:10px var(--mono);color:var(--ink3);margin-left:6px}
+.stats{display:flex;gap:16px;margin-left:auto;color:var(--ink2);font-size:12px}
+.stats b{color:var(--ink);font:600 13px var(--mono)}
+.pill{display:flex;align-items:center;gap:8px;padding:4px 10px;border:1px solid var(--line);border-radius:99px;
+  font-size:12px;color:var(--ink2);max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ink3);flex:none}
+.pill.busy .dot{background:var(--teal);animation:pulse 1.2s infinite}
+.pill.paused .dot{background:var(--red)} .pill.paused{border-color:var(--red);color:var(--red)}
+@keyframes pulse{50%{opacity:.3}}
+
+.add{display:flex;gap:8px;padding:0 18px 10px;align-items:center}
+.add input[type=text]{flex:1;min-width:200px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+  padding:8px 12px;outline:none}
+.add input[type=text]:focus{border-color:var(--amber);box-shadow:0 0 0 3px var(--amber-d)}
+select,.btn{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:7px 10px;cursor:pointer}
+.btn:hover{border-color:var(--line2);background:var(--panel2)}
+.btn.primary{background:var(--amber);border-color:var(--amber);color:#1b1404;font-weight:600}
+.btn.sm{padding:3px 8px;font-size:12px}
+.btn:disabled{opacity:.5;cursor:default}
+label.chk{display:flex;align-items:center;gap:6px;color:var(--ink2);font-size:12.5px;white-space:nowrap}
+
+main{padding:16px 18px 40px}
+.view{display:none} .view.on{display:block}
+
+/* ---------- board */
+.board{display:grid;grid-template-columns:repeat(3,minmax(270px,1fr)) minmax(220px,.75fr) minmax(180px,.55fr);gap:12px;align-items:start}
+.lane{background:var(--panel);border:1px solid var(--line);border-radius:10px;min-height:120px;display:flex;flex-direction:column;max-height:calc(100vh - 150px)}
+.lane h3{margin:0;padding:10px 12px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink2);
+  display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line)}
+.lane h3 .num{color:var(--ink3)}
+.lane[data-lane=must_watch] h3{color:var(--amber)}
+.lane[data-lane=must_watch]{border-color:color-mix(in srgb,var(--amber) 40%,var(--line))}
+.cards{padding:8px;display:flex;flex-direction:column;gap:6px;overflow:auto;flex:1;min-height:60px}
+.lane.drop .cards{background:color-mix(in srgb,var(--amber) 6%,transparent)}
+.card{display:grid;grid-template-columns:96px 1fr;gap:9px;padding:6px;border-radius:7px;background:var(--panel2);
+  border:1px solid transparent;cursor:grab;position:relative}
+.card:hover{border-color:var(--line2)}
+.card.dragging{opacity:.35}
+.card.ph{height:4px;padding:0;background:var(--amber);border-radius:2px;display:block}
+.thumb{width:96px;aspect-ratio:16/9;border-radius:5px;background:var(--line) center/cover;position:relative;overflow:hidden}
+.thumb .len{position:absolute;right:3px;bottom:3px;background:#000c;color:#fff;font:600 10px var(--mono);padding:1px 4px;border-radius:3px}
+.card .t{font-weight:550;font-size:13px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.card .m{font-size:11.5px;color:var(--ink2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chips{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.chip{font:600 10px var(--mono);padding:1px 6px;border-radius:4px;background:var(--line);color:var(--ink2);letter-spacing:.02em}
+.chip.ok{background:var(--teal-d);color:var(--teal)} .chip.q{background:var(--blue-d);color:var(--blue)}
+.chip.bad{background:var(--red-d);color:var(--red)} .chip.amb{background:var(--amber-d);color:var(--amber)}
+.acts{position:absolute;top:4px;right:4px;display:none;gap:2px}
+.card:hover .acts{display:flex}
+.ia{border:0;background:var(--panel);border-radius:5px;width:22px;height:22px;cursor:pointer;color:var(--ink2);font-size:12px;
+  box-shadow:0 0 0 1px var(--line2)}
+.ia:hover{color:var(--ink)}
+.lane[data-lane=done] .card,.lane[data-lane=skip] .card{grid-template-columns:1fr}
+.lane[data-lane=done] .thumb,.lane[data-lane=skip] .thumb{display:none}
+.empty{color:var(--ink3);font-size:12px;padding:14px;text-align:center}
+
+/* ---------- channels */
+.chgrid{display:grid;grid-template-columns:290px 1fr;gap:14px;align-items:start}
+.chlist{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;position:sticky;top:120px}
+.chrow{display:grid;grid-template-columns:34px 1fr auto;gap:10px;align-items:center;padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--line)}
+.chrow:last-child{border-bottom:0}
+.chrow:hover{background:var(--panel2)} .chrow.on{background:var(--panel2);box-shadow:inset 3px 0 0 var(--amber)}
+.av{width:34px;height:34px;border-radius:50%;background:var(--line) center/cover;display:grid;place-items:center;font-weight:700;color:var(--ink2)}
+.chrow .n{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cov{height:3px;background:var(--line);border-radius:2px;margin-top:4px;overflow:hidden}
+.cov i{display:block;height:100%;background:var(--teal)}
+.chdetail{background:var(--panel);border:1px solid var(--line);border-radius:10px;min-height:300px}
+.chhead{padding:16px;display:flex;gap:14px;align-items:center;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.chhead h2{margin:0;font-size:19px}
+.kpis{display:flex;gap:22px;margin-left:auto;flex-wrap:wrap}
+.kpi{display:flex;flex-direction:column} .kpi b{font:600 16px var(--mono)} .kpi span{font-size:11px;color:var(--ink3);text-transform:uppercase;letter-spacing:.05em}
+.tools{display:flex;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap;align-items:center}
+.tools .sep{width:1px;height:22px;background:var(--line);margin:0 4px}
+table{width:100%;border-collapse:collapse}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);position:sticky;top:112px;background:var(--panel);z-index:1}
+td{padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+tr:hover td{background:var(--panel2)}
+td.r,th.r{text-align:right}
+.vt{display:flex;gap:10px;align-items:center;cursor:pointer;min-width:0}
+.vt .thumb{width:72px;flex:none}
+.vt span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-weight:500}
+.bo{display:flex;align-items:center;gap:6px;justify-content:flex-end}
+.bo i{display:block;height:6px;border-radius:3px;background:var(--violet);opacity:.8}
+
+/* ---------- search */
+.sbox{display:flex;gap:8px;max-width:900px}
+.sbox input{flex:1;font-size:16px;padding:11px 14px;background:var(--panel);border:1px solid var(--line);border-radius:10px;outline:none}
+.sbox input:focus{border-color:var(--amber);box-shadow:0 0 0 3px var(--amber-d)}
+.sres{max-width:900px;margin-top:16px;display:flex;flex-direction:column;gap:12px}
+.sv{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.sv h4{margin:0 0 6px;font-size:14px;cursor:pointer} .sv h4:hover{color:var(--amber)}
+.hit{display:grid;grid-template-columns:64px 1fr;gap:10px;padding:5px 0;border-top:1px dashed var(--line);font-size:13px}
+.hit:first-of-type{border-top:0}
+.ts{font:600 12px var(--mono);color:var(--blue);cursor:pointer;background:none;border:0;padding:0;text-align:left}
+mark{background:var(--amber-d);color:var(--amber);border-radius:2px;padding:0 1px}
+
+/* ---------- drawer */
+.scrim{position:fixed;inset:0;background:#0007;opacity:0;pointer-events:none;transition:opacity .15s;z-index:30}
+.scrim.on{opacity:1;pointer-events:auto}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(620px,100vw);background:var(--panel);border-left:1px solid var(--line);
+  transform:translateX(100%);transition:transform .18s ease;z-index:31;display:flex;flex-direction:column}
+.drawer.on{transform:none}
+.dhead{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:flex-start}
+.dhead h2{margin:0;font-size:16px;line-height:1.3;flex:1}
+.dbody{overflow:auto;flex:1;padding:0 16px 30px}
+.player{aspect-ratio:16/9;background:#000;border-radius:8px;margin:14px 0 10px;overflow:hidden}
+.player.live{position:sticky;top:0;z-index:2;margin-top:0;border-radius:0 0 8px 8px;box-shadow:0 8px 18px #0008}
+.player iframe{width:100%;height:100%;border:0}
+.player .poster{width:100%;height:100%;background:#000 center/cover;display:grid;place-items:center;cursor:pointer}
+.player .poster span{background:#000a;color:#fff;padding:8px 14px;border-radius:99px;font-weight:600}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+.seg{display:flex;border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.seg button{border:0;background:none;padding:5px 10px;font-size:12px;cursor:pointer;color:var(--ink2);border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--amber-d);color:var(--amber);font-weight:600}
+.stars button{border:0;background:none;font-size:17px;cursor:pointer;color:var(--line2);padding:0 1px}
+.stars button.on{color:var(--amber)}
+textarea{width:100%;min-height:70px;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r);padding:8px 10px;resize:vertical;outline:none}
+textarea:focus{border-color:var(--line2)}
+.tr{margin-top:6px}
+.tr .c{display:grid;grid-template-columns:56px 1fr;gap:10px;padding:6px 0;border-top:1px solid var(--line);font-size:13.5px;line-height:1.55}
+.tr .c.hl{background:color-mix(in srgb,var(--amber) 8%,transparent)}
+h5{margin:18px 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:flex;align-items:center;gap:10px}
+h5 .grow{flex:1}
+h5 .chip{text-transform:none;letter-spacing:0}
+.trtools{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.trtools input{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;flex:1;min-width:140px;outline:none}
+
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%) translateY(20px);opacity:0;background:var(--ink);color:var(--bg);
+  padding:9px 14px;border-radius:8px;font-size:13px;transition:.2s;z-index:50;max-width:80vw}
+.toast.on{opacity:1;transform:translateX(-50%)}
+.jobs{position:fixed;top:100px;right:18px;width:380px;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  box-shadow:0 10px 30px #0006;z-index:25;display:none;padding:12px;font-size:12.5px}
+.jobs.on{display:block}
+.jobs .jl{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--line)}
+@media (max-width:1100px){.board{grid-template-columns:repeat(2,1fr)}.chgrid{grid-template-columns:1fr}.chlist{position:static}.stats{display:none}}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="brand"><i></i>ytkb</div>
+    <nav id="nav">
+      <button data-v="board" class="on">Board<kbd>b</kbd></button>
+      <button data-v="channels">Channels<kbd>c</kbd></button>
+      <button data-v="search">Search<kbd>/</kbd></button>
+    </nav>
+    <div class="stats" id="stats"></div>
+    <div class="pill" id="pill" title="Job queue"><span class="dot"></span><span id="pilltext">idle</span></div>
+  </div>
+  <form class="add" id="addform" autocomplete="off">
+    <input type="text" id="addtext" placeholder="Paste video URLs, IDs, @handles or channel URLs — several at once is fine">
+    <select id="addlane" title="Lane for videos">
+      <option value="inbox">→ Inbox</option><option value="must_watch">→ Must-watch</option><option value="watching">→ Watching</option>
+    </select>
+    <label class="chk"><input type="checkbox" id="addtr"> transcript</label>
+    <select id="addch" title="For channels">
+      <option value="all">channel: all transcripts</option>
+      <option value="top:25">channel: top 25 transcripts</option>
+      <option value="top:100">channel: top 100 transcripts</option>
+      <option value="none">channel: catalogue only</option>
+    </select>
+    <button class="btn primary" type="submit">Add</button>
+  </form>
+</header>
+
+<main>
+  <section class="view on" id="v-board"><div class="board" id="board"></div></section>
+
+  <section class="view" id="v-channels">
+    <div class="chgrid">
+      <div class="chlist" id="chlist"></div>
+      <div class="chdetail" id="chdetail"><div class="empty" style="padding:60px">Follow a channel by pasting its @handle or URL above.<br>Its whole catalogue is listed with lengths, views and popularity, then transcripts queue most-viewed first.</div></div>
+    </div>
+  </section>
+
+  <section class="view" id="v-search">
+    <form class="sbox" id="sform">
+      <input id="sq" placeholder='Search every transcript — e.g. tool routing, "chain of thought", agent*'>
+      <select id="sch"><option value="">all channels</option></select>
+    </form>
+    <div class="sres" id="sres"></div>
+  </section>
+</main>
+
+<div class="jobs" id="jobs"></div>
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer"></aside>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const LANES = [["inbox","Inbox"],["must_watch","Must-watch"],["watching","Watching"],["done","Done"],["skip","Skip"]];
+const $ = (s, el=document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtDur = s => { if (s == null) return "–"; s = Math.round(s); const h = s/3600|0, m = (s%3600)/60|0, x = s%60;
+  return h ? `${h}:${String(m).padStart(2,"0")}:${String(x).padStart(2,"0")}` : `${m}:${String(x).padStart(2,"0")}`; };
+const fmtN = n => n == null ? "–" : n >= 1e9 ? (n/1e9).toFixed(1)+"B" : n >= 1e6 ? (n/1e6).toFixed(1)+"M" : n >= 1e4 ? Math.round(n/1e3)+"K" : n >= 1e3 ? (n/1e3).toFixed(1)+"K" : String(n);
+const fmtHrs = s => s ? (s/3600 >= 10 ? Math.round(s/3600) : (s/3600).toFixed(1)) + "h" : "0h";
+const thumb = (id, url) => url || `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
+const yt = (id, t) => `https://www.youtube.com/watch?v=${id}${t ? `&t=${Math.floor(t)}s` : ""}`;
+
+async function api(path, body) {
+  const opt = body === undefined ? {} : {method:"POST", headers:{"Content-Type":"application/json","X-YTKB":"1"}, body:JSON.stringify(body)};
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+let toastT;
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("on"), 3200); }
+
+function tChip(v) {
+  if (v.transcript_job) return `<span class="chip q">${v.transcript_job === "running" ? "fetching…" : "queued"}</span>`;
+  const s = v.transcript_status;
+  if (s === "ok") return `<span class="chip ok" title="${esc(v.transcript_language||"")}">transcript${v.word_count ? " · " + fmtN(v.word_count) + "w" : ""}</span>`;
+  if (!s) return "";
+  const label = {disabled:"captions off", no_captions:"no captions", unavailable:(v.transcript_reason||"unavailable").replace("_"," "), blocked:"blocked", error:"error"}[s] || s;
+  return `<span class="chip bad">${esc(label)}</span>`;
+}
+
+/* ------------------------------------------------------------ views */
+let view = "board", state = {board:null, channels:[], channel:null, chOpts:{sort:"views", kinds:["video","live"], min:0}};
+function show(v) {
+  view = v;
+  document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("on", b.dataset.v === v));
+  document.querySelectorAll(".view").forEach(s => s.classList.toggle("on", s.id === "v-" + v));
+  if (v === "board") loadBoard();
+  if (v === "channels") loadChannels();
+  if (v === "search") { loadChannelOptions(); setTimeout(() => $("#sq").focus(), 0); }
+}
+$("#nav").onclick = e => { const b = e.target.closest("button"); if (b) show(b.dataset.v); };
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input,textarea,select")) { if (e.key === "Escape") e.target.blur(); return; }
+  if (e.key === "Escape") return closeDrawer();
+  if (e.key === "b") show("board");
+  if (e.key === "c") show("channels");
+  if (e.key === "/") { e.preventDefault(); show("search"); }
+  if (e.key === "a") { e.preventDefault(); $("#addtext").focus(); }
+});
+
+/* ------------------------------------------------------------- add */
+$("#addform").onsubmit = async e => {
+  e.preventDefault();
+  const text = $("#addtext").value.trim(); if (!text) return;
+  try {
+    const r = await api("/api/add", {text, lane:$("#addlane").value, transcript:$("#addtr").checked || null, channel_transcripts:$("#addch").value});
+    const parts = [];
+    if (r.videos.length) parts.push(`${r.videos.length} video${r.videos.length>1?"s":""}`);
+    if (r.channels.length) parts.push(`${r.channels.length} channel scrape${r.channels.length>1?"s":""} queued`);
+    if (r.unrecognised.length) parts.push(`skipped: ${r.unrecognised.slice(0,3).join(" ")}`);
+    if (r.unsupported.length) parts.push(`playlists not supported yet`);
+    toast(parts.join(" · ") || "nothing recognised");
+    $("#addtext").value = "";
+    refresh();
+  } catch (err) { toast("Add failed: " + err.message); }
+};
+
+/* ----------------------------------------------------------- board */
+async function loadBoard() {
+  const d = await api("/api/board"); state.board = d.lanes; renderStatus(d); renderBoard();
+}
+function cardHTML(v) {
+  const meta = [v.channel_title, v.view_count != null ? fmtN(v.view_count) + " views" : null].filter(Boolean).join(" · ");
+  const tags = (v.tags || []).filter(t => t !== "general").slice(0,2).map(t => `<span class="chip">${esc(t)}</span>`).join("");
+  const wl = (v.sources || []).includes("watch_later") ? `<span class="chip amb">watch later</span>` : "";
+  const stars = v.interest ? `<span class="chip amb">${"★".repeat(v.interest)}</span>` : "";
+  return `<div class="card" draggable="true" data-id="${v.video_id}">
+    <div class="thumb" style="background-image:url('${esc(thumb(v.video_id, v.thumbnail_url))}')">${v.duration_s ? `<span class="len">${fmtDur(v.duration_s)}</span>` : ""}</div>
+    <div style="min-width:0"><div class="t">${esc(v.title || v.video_id)}</div><div class="m">${esc(meta) || "<span class=faint>fetching metadata…</span>"}</div>
+    <div class="chips">${tChip(v)}${stars}${wl}${tags}</div></div>
+    <div class="acts"><button class="ia" data-a="tr" title="Fetch transcript">T</button><a class="ia" style="display:grid;place-items:center" href="${yt(v.video_id)}" target="_blank" rel="noopener" title="Open on YouTube" data-a="yt">↗</a><button class="ia" data-a="rm" title="Remove from board">✕</button></div>
+  </div>`;
+}
+function renderBoard() {
+  const b = $("#board");
+  b.innerHTML = LANES.map(([k, label]) => `<div class="lane" data-lane="${k}"><h3>${label}<span class="num">${state.board[k].length}</span></h3>
+    <div class="cards">${state.board[k].map(cardHTML).join("") || `<div class="empty">${k === "inbox" ? "Paste URLs above, or import Takeout" : "drop here"}</div>`}</div></div>`).join("");
+}
+let dragId = null;
+const ph = Object.assign(document.createElement("div"), {className:"card ph"});
+$("#board").addEventListener("dragstart", e => { const c = e.target.closest(".card"); if (!c) return; dragId = c.dataset.id; c.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", dragId); });
+$("#board").addEventListener("dragend", e => { e.target.closest(".card")?.classList.remove("dragging"); ph.remove(); document.querySelectorAll(".lane.drop").forEach(l => l.classList.remove("drop")); dragId = null; });
+$("#board").addEventListener("dragover", e => {
+  const lane = e.target.closest(".lane"); if (!lane || !dragId) return; e.preventDefault();
+  document.querySelectorAll(".lane.drop").forEach(l => l !== lane && l.classList.remove("drop")); lane.classList.add("drop");
+  const cards = [...lane.querySelectorAll(".card:not(.ph):not(.dragging)")];
+  const after = cards.find(c => e.clientY < c.getBoundingClientRect().top + c.offsetHeight / 2);
+  const box = $(".cards", lane); $(".empty", lane)?.remove();
+  after ? box.insertBefore(ph, after) : box.appendChild(ph);
+});
+$("#board").addEventListener("drop", async e => {
+  const lane = e.target.closest(".lane"); if (!lane || !dragId) return; e.preventDefault();
+  const prev = ph.previousElementSibling, next = ph.nextElementSibling;
+  const body = {video_id:dragId, lane:lane.dataset.lane,
+    after: prev && prev.classList.contains("card") && prev.dataset.id !== dragId ? prev.dataset.id : null,
+    before: next && next.classList.contains("card") && next.dataset.id !== dragId ? next.dataset.id : null};
+  ph.remove();
+  try { await api("/api/move", body); if (body.lane === "must_watch") toast("Must-watch: transcript queued"); } catch (err) { toast(err.message); }
+  loadBoard();
+});
+$("#board").addEventListener("click", async e => {
+  const card = e.target.closest(".card"); if (!card) return;
+  const a = e.target.closest("[data-a]")?.dataset.a, id = card.dataset.id;
+  if (a === "yt") return;
+  if (a === "tr") { const r = await api(`/api/video/${id}/transcript`, {}); toast(r.queued ? "Transcript queued" : "Already have it (open the card to refetch)"); return loadBoard(); }
+  if (a === "rm") { await api(`/api/video/${id}/remove`, {}); return loadBoard(); }
+  openVideo(id);
+});
+
+/* -------------------------------------------------------- channels */
+async function loadChannels() {
+  const d = await api("/api/channels"); state.channels = d.channels; renderChList();
+  if (!state.channel && d.channels.length) state.channel = d.channels[0].channel_id;
+  if (state.channel) loadChannel(state.channel);
+}
+function renderChList() {
+  $("#chlist").innerHTML = state.channels.map(c => {
+    const cov = c.total_duration_s ? Math.round(100 * c.transcribed_duration_s / c.total_duration_s) : 0;
+    return `<div class="chrow ${c.channel_id === state.channel ? "on" : ""}" data-id="${c.channel_id}">
+      <div class="av" style="${c.thumbnail_url ? `background-image:url('${esc(c.thumbnail_url)}')` : ""}">${c.thumbnail_url ? "" : esc((c.title||"?")[0])}</div>
+      <div style="min-width:0"><div class="n">${c.followed ? "" : "<span class=faint>○ </span>"}${esc(c.title || c.channel_id)}</div>
+        <div class="faint num" style="font-size:11px">${c.stored_videos} videos · ${fmtHrs(c.total_duration_s)} · ${c.transcripts_ok} transcripts</div>
+        <div class="cov" title="${cov}% of runtime transcribed"><i style="width:${cov}%"></i></div></div>
+      <div class="num faint">${fmtN(c.subscriber_count)}</div></div>`;
+  }).join("") || `<div class="empty">No channels yet</div>`;
+}
+$("#chlist").onclick = e => { const r = e.target.closest(".chrow"); if (r) { state.channel = r.dataset.id; renderChList(); loadChannel(r.dataset.id); } };
+async function loadChannel(id) {
+  const o = state.chOpts;
+  const d = await api(`/api/channel/${id}?sort=${o.sort}&kinds=${o.kinds.join(",")}&min_duration=${o.min}`);
+  if (!d.channel) return;
+  state.chData = d; renderChannel();
+}
+function renderChannel() {
+  const d = state.chData, ch = d.channel, s = d.summary, o = state.chOpts;
+  const maxBo = Math.max(1, ...d.videos.map(v => v.breakout || 0));
+  const cov = s.shown ? Math.round(100 * s.transcripts_ok / s.shown) : 0;
+  $("#chdetail").innerHTML = `
+  <div class="chhead">
+    <div class="av" style="width:52px;height:52px;${ch.thumbnail_url ? `background-image:url('${esc(ch.thumbnail_url)}')` : ""}"></div>
+    <div><h2>${esc(ch.title || ch.channel_id)}</h2>
+      <div class="muted">${ch.handle ? `<a href="https://www.youtube.com/${esc(ch.handle)}" target="_blank" rel="noopener">${esc(ch.handle)}</a> · ` : ""}${ch.last_scraped_at ? "scraped " + esc(ch.last_scraped_at.slice(0,10)) : "not scraped"} · via ${esc(ch.meta_source || "?")}</div></div>
+    <div class="kpis">
+      <div class="kpi"><b>${fmtN(ch.subscriber_count)}</b><span>subscribers</span></div>
+      <div class="kpi"><b>${d.total_stored}</b><span>stored uploads</span></div>
+      <div class="kpi"><b>${fmtHrs(s.total_duration_s)}</b><span>runtime shown</span></div>
+      <div class="kpi"><b>${fmtDur(s.median_duration_s)}</b><span>median length</span></div>
+      <div class="kpi"><b>${s.transcripts_ok}/${s.shown}</b><span>transcripts · ${cov}%</span></div>
+    </div>
+  </div>
+  <div class="tools">
+    <select id="csort" title="Sort">
+      ${[["views","Most viewed"],["views_per_day","Views / day"],["breakout","Breakouts (× channel median)"],["longest","Longest"],["newest","Newest"],["oldest","Oldest"]].map(([k,l]) => `<option value="${k}" ${o.sort===k?"selected":""}>${l}</option>`).join("")}
+    </select>
+    ${[["video","videos"],["live","streams"],["short","shorts"]].map(([k,l]) => `<label class="chk"><input type="checkbox" data-kind="${k}" ${o.kinds.includes(k)?"checked":""}> ${l}</label>`).join("")}
+    <select id="cmin" title="Minimum length">${[[0,"any length"],[300,"≥ 5 min"],[900,"≥ 15 min"],[1800,"≥ 30 min"],[3600,"≥ 1 h"]].map(([k,l]) => `<option value="${k}" ${+o.min===k?"selected":""}>${l}</option>`).join("")}</select>
+    <span class="sep"></span>
+    <button class="btn sm" id="csel" title="Transcribe the checked rows">Transcribe selected</button>
+    <button class="btn sm" id="cboard" title="Put the checked rows on the board">+ Board</button>
+    <span class="sep"></span>
+    <button class="btn sm" id="call">Transcribe all shown</button>
+    <button class="btn sm" id="cscrape" title="Re-list uploads and refresh view counts">Rescrape</button>
+    <label class="chk" style="margin-left:auto"><input type="checkbox" id="cfollow" ${ch.followed?"checked":""}> following</label>
+  </div>
+  <table><thead><tr><th style="width:28px"><input type="checkbox" id="call-chk"></th><th class="r">#</th><th>Video</th><th class="r">Length</th><th class="r">Views</th><th class="r">Views/day</th><th class="r" title="views ÷ this channel's median for the same kind">× median</th><th class="r">Published</th><th>Transcript</th></tr></thead>
+  <tbody>${d.videos.map((v,i) => `<tr data-id="${v.video_id}">
+    <td><input type="checkbox" class="rowchk"></td>
+    <td class="r num faint">${i+1}</td>
+    <td><div class="vt" data-open="1"><div class="thumb" style="background-image:url('${esc(thumb(v.video_id, v.thumbnail_url))}')"></div><span>${esc(v.title || v.video_id)}</span>${v.lane ? `<span class="chip amb">${esc(v.lane.replace("_","-"))}</span>` : ""}${v.kind !== "video" ? `<span class="chip">${esc(v.kind)}</span>` : ""}</div></td>
+    <td class="r num">${fmtDur(v.duration_s)}</td>
+    <td class="r num">${fmtN(v.view_count)}</td>
+    <td class="r num">${v.views_per_day != null ? fmtN(Math.round(v.views_per_day)) : "–"}</td>
+    <td class="r num"><div class="bo">${v.breakout != null ? v.breakout.toFixed(1) + "×" : "–"}<i style="width:${Math.round(50 * Math.min(v.breakout || 0, maxBo) / maxBo)}px"></i></div></td>
+    <td class="r num faint" title="${v.published_approx ? "approximate (from yt-dlp's '3 years ago')" : ""}">${v.published_at ? (v.published_approx ? "≈" : "") + esc(v.published_at.slice(0,10)) : "–"}</td>
+    <td>${tChip(v) || `<button class="btn sm" data-tr="1">fetch</button>`}</td></tr>`).join("")}
+  </tbody></table>${d.videos.length ? "" : `<div class="empty" style="padding:40px">No videos match — loosen the filters, or the scrape is still queued.</div>`}`;
+  const cd = $("#chdetail");
+  $("#csort", cd).onchange = e => { o.sort = e.target.value; loadChannel(ch.channel_id); };
+  $("#cmin", cd).onchange = e => { o.min = +e.target.value; loadChannel(ch.channel_id); };
+  cd.querySelectorAll("[data-kind]").forEach(cb => cb.onchange = () => { o.kinds = [...cd.querySelectorAll("[data-kind]:checked")].map(x => x.dataset.kind); loadChannel(ch.channel_id); });
+  $("#call-chk", cd).onchange = e => cd.querySelectorAll(".rowchk").forEach(x => x.checked = e.target.checked);
+  const sel = () => [...cd.querySelectorAll(".rowchk:checked")].map(x => x.closest("tr").dataset.id);
+  $("#csel", cd).onclick = async () => { const ids = sel(); if (!ids.length) return toast("Tick some rows first");
+    const r = await api(`/api/channel/${ch.channel_id}/transcripts`, {video_ids:ids}); toast(`${r.queued} transcripts queued`); loadChannel(ch.channel_id); };
+  $("#cboard", cd).onclick = async () => { const ids = sel(); if (!ids.length) return toast("Tick some rows first");
+    for (const id of ids) await api(`/api/video/${id}/board`, {sources:[`channel:${ch.channel_id}`]}); toast(`${ids.length} added to Inbox`); loadChannel(ch.channel_id); };
+  $("#call", cd).onclick = async () => { const ids = d.videos.map(v => v.video_id);
+    if (ids.length > 50 && !confirm(`Queue up to ${ids.length} transcripts? At ~4 s each that's ~${Math.ceil(ids.length*4/60)} min of polite fetching.`)) return;
+    const r = await api(`/api/channel/${ch.channel_id}/transcripts`, {video_ids:ids}); toast(`${r.queued} transcripts queued (most-viewed first)`); loadChannel(ch.channel_id); };
+  $("#cscrape", cd).onclick = async () => { await api(`/api/channel/${ch.channel_id}/scrape`, {transcripts:"none"}); toast("Rescrape queued"); };
+  $("#cfollow", cd).onchange = async e => { await api(`/api/channel/${ch.channel_id}`, {followed: e.target.checked ? 1 : 0}); loadChannels(); };
+  cd.querySelector("tbody").onclick = async e => {
+    const tr = e.target.closest("tr"); if (!tr) return;
+    if (e.target.dataset.tr) { await api(`/api/video/${tr.dataset.id}/transcript`, {}); toast("Transcript queued"); return loadChannel(ch.channel_id); }
+    if (e.target.closest("[data-open]")) openVideo(tr.dataset.id);
+  };
+}
+
+/* ---------------------------------------------------------- search */
+async function loadChannelOptions() {
+  const d = await api("/api/channels"); const cur = $("#sch").value;
+  $("#sch").innerHTML = `<option value="">all channels</option>` + d.channels.map(c => `<option value="${c.channel_id}">${esc(c.title || c.channel_id)}</option>`).join("");
+  $("#sch").value = cur;
+}
+let sT;
+$("#sq").oninput = () => { clearTimeout(sT); sT = setTimeout(runSearch, 220); };
+$("#sch").onchange = runSearch;
+$("#sform").onsubmit = e => { e.preventDefault(); runSearch(); };
+function hl(snip, marks) { return esc(snip).split(esc(marks[0])).join("<mark>").split(esc(marks[1])).join("</mark>"); }
+async function runSearch() {
+  const q = $("#sq").value.trim(); const box = $("#sres");
+  if (!q) { box.innerHTML = ""; return; }
+  const d = await api(`/api/search?q=${encodeURIComponent(q)}&channel=${$("#sch").value}`);
+  if (d.error) { box.innerHTML = `<div class="empty">Query error: ${esc(d.error)}</div>`; return; }
+  const m = d.marks || ["\u0002","\u0003"];
+  const vids = d.videos.map(g => `<div class="sv" data-id="${g.video_id}">
+    <h4 data-open="1">${esc(g.title || g.video_id)} <span class="faint" style="font-weight:400">— ${esc(g.channel_title || "")} · ${fmtDur(g.duration_s)}</span></h4>
+    ${g.hits.slice(0,6).map(h => `<div class="hit"><button class="ts" data-t="${h.start}">${fmtDur(h.start)}</button><div>${hl(h.snippet, m)}</div></div>`).join("")}
+    ${g.hits.length > 6 ? `<div class="faint" style="font-size:12px">+${g.hits.length-6} more moments</div>` : ""}</div>`).join("");
+  const titles = d.titles.length ? `<div class="sv"><h5 style="margin-top:0">Title & description matches</h5>${d.titles.map(t => `<div class="hit" data-id="${t.video_id}"><span class="faint num">${fmtDur(t.duration_s)}</span><div data-open="1" style="cursor:pointer">${hl(t.title_hl, m)} <span class="faint">— ${esc(t.channel_title||"")}</span> ${tChip(t)}</div></div>`).join("")}</div>` : "";
+  box.innerHTML = (vids || `<div class="empty">No transcript matches for “${esc(q)}”.</div>`) + titles;
+}
+$("#sres").onclick = e => {
+  const host = e.target.closest("[data-id]"); if (!host) return;
+  const t = e.target.closest(".ts");
+  if (t) return openVideo(host.dataset.id, +t.dataset.t);
+  if (e.target.closest("[data-open]")) openVideo(host.dataset.id);
+};
+
+/* ---------------------------------------------------------- drawer */
+let cur = null, noteT;
+function closeDrawer() { $("#drawer").classList.remove("on"); $("#scrim").classList.remove("on"); $("#drawer").innerHTML = ""; cur = null; }
+$("#scrim").onclick = closeDrawer;
+function setPlayer(id, t) {
+  $("#player").classList.add("live");
+  $("#player").innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${id}?autoplay=1&start=${Math.floor(t||0)}&rel=0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`;
+}
+async function openVideo(id, t) {
+  const v = await api(`/api/video/${id}`); cur = v;
+  const d = $("#drawer");
+  const st = v.transcript_job ? `<span class="chip q">${v.transcript_job}</span>` : tChip(v) || `<span class="chip">no transcript yet</span>`;
+  d.innerHTML = `
+  <div class="dhead"><h2>${esc(v.title || v.video_id)}</h2><button class="ia" id="dclose" title="Close (Esc)">✕</button></div>
+  <div class="dbody">
+    <div class="player" id="player"><div class="poster" style="background-image:url('https://i.ytimg.com/vi/${v.video_id}/hqdefault.jpg')"><span>▶ Play here</span></div></div>
+    <div class="muted" style="font-size:12.5px">${esc(v.channel_title || v.channel_id || "")} · ${fmtDur(v.duration_s)} · ${fmtN(v.view_count)} views${v.like_count ? " · " + fmtN(v.like_count) + " likes" : ""}${v.published_at ? " · " + esc(v.published_at.slice(0,10)) : ""} · <a href="${yt(v.video_id)}" target="_blank" rel="noopener">YouTube ↗</a></div>
+    <div class="row">
+      <div class="seg" id="dlane">${LANES.map(([k,l]) => `<button data-l="${k}" class="${v.lane===k?"on":""}">${l}</button>`).join("")}</div>
+      <div class="stars" id="dstars">${[1,2,3,4,5].map(n => `<button data-n="${n}" class="${(v.interest||0)>=n?"on":""}">★</button>`).join("")}</div>
+    </div>
+    <h5>Notes<span class="grow"></span><span class="faint" id="dsaved"></span></h5>
+    <textarea id="dnote" placeholder="Why this matters, what to try, where it fits in the curriculum…">${esc(v.note || "")}</textarea>
+    <h5>Transcript ${st}</h5>
+    <div class="trtools">${v.chunks.length ? `<input id="dfind" placeholder="find in transcript…"><button class="btn sm" id="dmd">Copy as Markdown</button>` : ""}
+      <button class="btn sm" id="dfetch">${v.transcript_status ? "Refetch" : "Fetch transcript"}</button></div>
+    ${v.transcript_status === "ok" ? `<div class="faint" style="font-size:12px;margin-top:6px">${esc(v.transcript_language)} · ${v.transcript_source === "caption_auto" ? "auto-generated captions" : "human captions"} · ${fmtN(v.word_count)} words</div>` : ""}
+    ${v.transcript_error ? `<div class="faint" style="font-size:12px">${esc(v.transcript_error)}</div>` : ""}
+    <div class="tr" id="dtr">${v.chunks.map(c => `<div class="c" data-s="${c.start}"><button class="ts" data-t="${c.start}">${fmtDur(c.start)}</button><div>${esc(c.text)}</div></div>`).join("")}</div>
+  </div>`;
+  d.classList.add("on"); $("#scrim").classList.add("on");
+  $("#dclose").onclick = closeDrawer;
+  $(".poster", d).onclick = () => setPlayer(v.video_id, 0);
+  if (t != null) {
+    setPlayer(v.video_id, t);
+    const row = [...d.querySelectorAll(".tr .c")].reverse().find(c => +c.dataset.s <= t + 0.01);
+    if (row) { row.classList.add("hl"); setTimeout(() => row.scrollIntoView({block:"center"}), 60); }
+  }
+  $("#dtr").onclick = e => { const b = e.target.closest(".ts"); if (b) setPlayer(v.video_id, +b.dataset.t); };
+  $("#dlane").onclick = async e => { const b = e.target.closest("button"); if (!b) return;
+    await api(`/api/video/${v.video_id}`, {lane:b.dataset.l}); d.querySelectorAll("#dlane button").forEach(x => x.classList.toggle("on", x === b));
+    if (b.dataset.l === "must_watch") toast("Must-watch: transcript queued"); refresh(); };
+  $("#dstars").onclick = async e => { const b = e.target.closest("button"); if (!b) return; const n = +b.dataset.n === v.interest ? 0 : +b.dataset.n;
+    v.interest = n; await api(`/api/video/${v.video_id}`, {interest:n});
+    d.querySelectorAll("#dstars button").forEach(x => x.classList.toggle("on", +x.dataset.n <= n)); refresh(); };
+  $("#dnote").oninput = e => { clearTimeout(noteT); $("#dsaved").textContent = "…";
+    noteT = setTimeout(async () => { await api(`/api/video/${v.video_id}`, {note:e.target.value}); $("#dsaved").textContent = "saved"; }, 600); };
+  $("#dfetch").onclick = async () => { await api(`/api/video/${v.video_id}/transcript`, {force:true}); toast("Transcript queued"); refresh(); };
+  if ($("#dmd")) $("#dmd").onclick = async () => { const r = await api(`/api/video/${v.video_id}/markdown`);
+    try { await navigator.clipboard.writeText(r.markdown); toast("Markdown copied"); } catch { toast("Clipboard blocked by the browser"); } };
+  if ($("#dfind")) $("#dfind").oninput = e => { const q = e.target.value.toLowerCase();
+    d.querySelectorAll(".tr .c").forEach(c => c.style.display = !q || c.textContent.toLowerCase().includes(q) ? "" : "none"); };
+}
+
+/* ---------------------------------------------------------- status */
+let lastSig = "";
+function renderStatus(d) {
+  const s = d.stats, j = d.jobs;
+  $("#stats").innerHTML = `<span><b>${s.must_watch}</b> must-watch</span><span><b>${s.transcripts_ok}</b> transcripts</span><span><b>${s.transcribed_hours}</b> h</span><span><b>${fmtN(s.transcript_words)}</b> words</span><span><b>${s.channels_followed}</b> channels</span>`;
+  const pill = $("#pill"); pill.classList.remove("busy","paused");
+  let txt;
+  if (j.paused_until) { pill.classList.add("paused"); txt = `YouTube paused us · resumes ${new Date(j.paused_until).toLocaleTimeString()} · ${j.queued} queued`; }
+  else if (j.running.length) { pill.classList.add("busy"); const r = j.running[0]; txt = `${r.kind.replace("_"," ")}: ${r.title || r.target} · ${j.queued} queued`; }
+  else txt = j.queued ? `${j.queued} queued` : `idle${j.failed.length ? ` · ${j.failed.length} failed` : ""}`;
+  $("#pilltext").textContent = txt;
+  const jb = $("#jobs");
+  jb.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b>Queue</b><span class="faint">metadata via ${esc(j.api)}</span></div>
+    ${Object.entries(j.counts).sort().map(([k,n]) => `<div class="jl"><span>${esc(k.replace(":"," · "))}</span><span class="num">${n}</span></div>`).join("") || `<div class="faint">empty</div>`}
+    ${j.failed.length ? `<h5>Recent failures</h5>${j.failed.slice(0,6).map(f => `<div class="faint" style="font-size:11.5px;padding:2px 0">${esc(f.kind)} ${esc(f.title || f.target)} — ${esc((f.error||"").slice(0,90))}</div>`).join("")}` : ""}
+    <div class="row" style="margin-top:10px"><button class="btn sm" id="jretry" ${j.failed.length ? "" : "disabled"}>Retry failed</button>
+    ${j.paused_until ? `<button class="btn sm" id="junpause">Resume now</button>` : ""}<button class="btn sm" id="jexport">Export markdown + JSONL</button></div>`;
+  $("#jretry").onclick = async () => { const r = await api("/api/jobs/retry", {}); toast(`${r.requeued} requeued`); refresh(); };
+  if ($("#junpause")) $("#junpause").onclick = async () => { await api("/api/jobs/unpause", {}); refresh(); };
+  $("#jexport").onclick = async () => { const r = await api("/api/export", {}); toast(`Exported ${r.markdown_files} notes → ${r.dir}`); };
+  return `${s.transcripts_ok}|${j.queued}|${j.running.map(r => r.id).join()}|${s.videos}`;
+}
+$("#pill").onclick = () => $("#jobs").classList.toggle("on");
+document.addEventListener("click", e => { if (!e.target.closest("#jobs,#pill")) $("#jobs").classList.remove("on"); });
+
+async function refresh() {
+  if (view === "board") return loadBoard();
+  if (view === "channels") return loadChannels();
+}
+async function poll() {
+  try {
+    const d = await api("/api/status");
+    const sig = renderStatus(d);
+    const busy = document.querySelector(".card.dragging, .rowchk:checked, #chdetail select:focus");
+    if (sig !== lastSig && !busy) { lastSig = sig; if (view !== "search") refresh(); }
+  } catch {}
+  setTimeout(poll, 4000);
+}
+loadBoard().then(poll);
+</script>
+</body>
+</html>

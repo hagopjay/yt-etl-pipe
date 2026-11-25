@@ -15,6 +15,33 @@ container-image decision, the human-review security model, cost model,
 testing strategy, runbook, and honest scope boundaries). This README is
 the *how to run it*.
 
+## Quick start: the local knowledge store (no AWS)
+
+```
+pip install -r requirements-kb.txt
+python -m kb serve --open        # board, channels, search at http://127.0.0.1:8765
+python -m kb follow @ZacharyLLM  # whole catalogue + transcripts, most-viewed first
+```
+
+`kb/` is the local-first version of the transcript queue: a must-watch Kanban
+board, channel catalogues ranked by views, views/day and breakout (× channel
+median), transcripts in SQLite with FTS5 search that deep-links to the second,
+and Markdown/JSONL exports for Obsidian and RAG. It feeds from `ingest/`
+(Google Takeout, RSS, URL lists) and needs no AWS account and no proxy.
+See [`kb/README.md`](kb/README.md). The AWS stack below is the scale-out path.
+
+## Tests
+
+```
+pip install -r requirements-dev.txt
+python -m pytest -q
+```
+
+`tests/test_findings_*.py` pin the known bugs in the AWS pipeline (a
+`test_bug_*` test passes while the bug exists; invert it when fixing).
+`tests/test_ingest.py` covers the Takeout/feed ingestion layer and
+`tests/test_kb.py` covers the local knowledge store. None of them touch the network.
+
 ## Repo map
 
 ```
@@ -35,6 +62,9 @@ quicksight/     boto3 provisioning script (Terraform's QuickSight
                 support doesn't cover the whole setup — see docs §"why
                 this is a script")
 docs/           Architecture Insights masterclass doc
+kb/             Local-first knowledge store: SQLite+FTS5, worker, CLI, web UI
+ingest/         Takeout / RSS / URL-list parsers -> prioritized queue
+tests/          Assessment findings, ingest and kb tests (no network)
 build.sh        Packages Lambda dependency bundles before `terraform
                 apply` — REQUIRED first step, see below
 ```

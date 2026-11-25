@@ -11,3 +11,5 @@ sample.jsonl
 results.csv
 !tests/fixtures/takeout/
 !tests/fixtures/takeout/Takeout/
+# Local knowledge store (kb/) -- your data, never the repo
+ytkb-data/
